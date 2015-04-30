@@ -189,59 +189,6 @@ def check_phylo_class(dist_matrix):
 	plt.show()
 	print np.mean(intra_cluster_dists), np.std(intra_cluster_dists), np.mean(inter_cluster_dists), np.std(inter_cluster_dists)
 
-
-def check_phylo_phylum(dist_matrix):
-	raw_data = open('Data/uclust.otus.97.tax', 'r').readlines()
-	clusters = {}
-	tax_names = {}
-	tax_count = 0
-	i = 0
-	only_one_bac = set(['Crenarchaeota', 'OP3', 'Gemmatimonadetes', 'TM6', 'Chlamydiae', 'Mitochondria'])
-	for line in raw_data[2:]:
-		taxonomy = line.split()[1]
-		if taxonomy != 'Unknown':
-			print taxonomy, only_one_bac
-			if ';' in taxonomy:
-				taxonomy = taxonomy.split(';')[1]
-			if taxonomy not in clusters and taxonomy not in only_one_bac:
-				clusters[taxonomy] = []
-				tax_names[tax_count] = taxonomy
-				tax_count += 1
-			if taxonomy not in only_one_bac:
-				clusters[taxonomy].append(i)
-		i += 1
-
-	# Sample and print indices within each cluster and between clusters
-	num_intra_samples = 1000
-	num_inter_samples = 4000
-	intra_cluster_dists = np.zeros((num_intra_samples, 1))
-	inter_cluster_dists = np.zeros((num_inter_samples, 1))
-	for i in xrange(num_intra_samples):
-		# Choose cluster, than choose two random OTUs in that cluster
-		cluster_name = tax_names[random.randint(0, len(clusters) - 1)]
-		rn1 = random.randint(0, len(clusters[cluster_name]) - 1)
-		rn2 = random.randint(0, len(clusters[cluster_name]) - 1)
-		while rn2 == rn1:
-			rn2 = random.randint(0, len(clusters[cluster_name]) - 1)
-		cluster_i1 = clusters[cluster_name][rn1]
-		cluster_i2 = clusters[cluster_name][rn2]
-		intra_cluster_dists[i] = dist_matrix[cluster_i1, cluster_i2]
-		
-	for i in xrange(num_inter_samples):
-		# Choose two random clusters, then choose one random OTU within each cluster
-		cluster_name1 = tax_names[random.randint(0, len(clusters) - 1)]
-		cluster_name2 = tax_names[random.randint(0, len(clusters) - 1)]
-		while cluster_name2 == cluster_name1:
-			cluster_name2 = tax_names[random.randint(0, len(clusters) - 1)]
-		rn1 = random.randint(0, len(clusters[cluster_name1]) - 1)
-		rn2 = random.randint(0, len(clusters[cluster_name2]) - 1)
-		cluster_i1 = clusters[cluster_name1][rn1]
-		cluster_i2 = clusters[cluster_name2][rn2]
-		print cluster_i1, cluster_i2, dist_matrix[cluster_i1, cluster_i2]
-		inter_cluster_dists[i] = dist_matrix[cluster_i1, cluster_i2]
-
-	print np.mean(intra_cluster_dists), np.std(intra_cluster_dists), np.mean(inter_cluster_dists), np.std(inter_cluster_dists)
-	
 def get_OTU_dists(cluster_names):
 	''' Returns a 2D matrix of OTU distances in the same order as the clusters in the correlation matrix '''
 	dists = np.zeros((len(cluster_names),len(cluster_names)))
