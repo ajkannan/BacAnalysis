@@ -1,10 +1,40 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import random
+import sys
 
 import skbio
 from skbio.stats.distance import mantel
 from igraph import *
+
+############################### I/O functions for Ising model predictions ###############################
+
+def select_few_OTUs():
+	data, cluster_names = read_data('Data/uclust.otus.97.mtx', normalize = True, threshold = 10000, binary_threshold = True)
+	with open('Data/bacteria_data_pared.csv', 'w') as f:
+		for i in xrange(data.shape[0]):
+			f.write(','.join([str(j) for j in data[i]]) + '\n')
+
+def plot_pred_vs_act_probs():
+	pred_probs = [float(val) for val in open('./sample_probabilities.csv', 'r').readlines()]
+	actual_data = open('Data/bacteria_data_pared.csv', 'r').readlines()
+	bit_seqs = {} # str sequence : (count, first index seen)
+	for i, line in enumerate(actual_data):
+		curr_val = ''.join([str(bit.split('.')[0]) for bit in line.split(',')])
+		if curr_val not in bit_seqs:
+			bit_seqs[curr_val] = [0.0, i]
+		bit_seqs[curr_val][0] += (1.0 / len(actual_data))
+	print bit_seqs
+
+	scatter_data = np.zeros((len(bit_seqs),2))
+	for i, bits in enumerate(bit_seqs):
+		scatter_data[i, 0] = bit_seqs[bits][0]
+		scatter_data[i, 1] = pred_probs[bit_seqs[bits][1]]
+	plt.scatter(scatter_data[:,0], scatter_data[:,1])
+	plt.title('Predicted versus Actual Colony Patterns')
+	plt.xlabel('Actual')
+	plt.ylabel('Predicted')
+	plt.show()
 
 ################################ Mantel Test (and related analysis) ###################
 
@@ -96,11 +126,128 @@ def get_strong_corrs(corrs, threshold = 0.3):
 	strong_corrs[np.where(np.abs(strong_corrs) < threshold)] = 0.0
 	return strong_corrs
 
+def check_phylo_class(dist_matrix):
+	raw_data = open('Data/uclust.otus.97.tax', 'r').readlines()
+	clusters = {}
+	tax_names = {}
+	tax_count = 0
+	i = 0
+	level = 5
+	for line in raw_data[2:]:
+		taxonomy = line.split()[1]
+		taxonomy = taxonomy.lower()
+		if taxonomy != 'Unknown' and taxonomy.count(';') > level - 1:
+			taxonomy = taxonomy.split(';')[level] # Get class
+			if taxonomy not in clusters:
+				clusters[taxonomy] = []
+				tax_names[tax_count] = taxonomy
+				tax_count += 1
+			clusters[taxonomy].append(i)
+		i += 1
+
+	pruned_clusters = {}
+	pruned_tax_names = {}
+	pruned_count = 0
+	for name in clusters:
+		if len(clusters[name]) > 30:
+			print len(clusters[name])
+			pruned_clusters[name] = clusters[name]
+			pruned_tax_names[pruned_count] = name
+			pruned_count += 1
+
+	# Sample and print indices within each cluster and between clusters
+	num_intra_samples = 1000
+	num_inter_samples = 1000
+	intra_cluster_dists = np.zeros((num_intra_samples, 1))
+	inter_cluster_dists = np.zeros((num_inter_samples, 1))
+	for i in xrange(num_intra_samples):
+		# Choose cluster, than choose two random OTUs in that cluster
+		cluster_name = pruned_tax_names[random.randint(0, len(pruned_clusters) - 1)]
+		rn1 = random.randint(0, len(pruned_clusters[cluster_name]) - 1)
+		rn2 = random.randint(0, len(pruned_clusters[cluster_name]) - 1)
+		while rn2 == rn1:
+			rn2 = random.randint(0, len(pruned_clusters[cluster_name]) - 1)
+		cluster_i1 = pruned_clusters[cluster_name][rn1]
+		cluster_i2 = pruned_clusters[cluster_name][rn2]
+		intra_cluster_dists[i] = dist_matrix[cluster_i1, cluster_i2]
+		
+	for i in xrange(num_inter_samples):
+		# Choose two random clusters, then choose one random OTU within each cluster
+		cluster_name1 = tax_names[random.randint(0, len(clusters) - 1)]
+		cluster_name2 = tax_names[random.randint(0, len(clusters) - 1)]
+		while cluster_name2 == cluster_name1:
+			cluster_name2 = tax_names[random.randint(0, len(clusters) - 1)]
+		rn1 = random.randint(0, len(clusters[cluster_name1]) - 1)
+		rn2 = random.randint(0, len(clusters[cluster_name2]) - 1)
+		cluster_i1 = clusters[cluster_name1][rn1]
+		cluster_i2 = clusters[cluster_name2][rn2]
+		inter_cluster_dists[i] = dist_matrix[cluster_i1, cluster_i2]
+
+	fig, axes = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True)
+	axes[0].hist(intra_cluster_dists, bins=[i * 0.05 for i in xrange(8)], normed = True)
+	axes[1].hist(inter_cluster_dists, bins=[i * 0.05 for i in xrange(8)], normed = True)
+	plt.show()
+	print np.mean(intra_cluster_dists), np.std(intra_cluster_dists), np.mean(inter_cluster_dists), np.std(inter_cluster_dists)
+
+
+def check_phylo_phylum(dist_matrix):
+	raw_data = open('Data/uclust.otus.97.tax', 'r').readlines()
+	clusters = {}
+	tax_names = {}
+	tax_count = 0
+	i = 0
+	only_one_bac = set(['Crenarchaeota', 'OP3', 'Gemmatimonadetes', 'TM6', 'Chlamydiae', 'Mitochondria'])
+	for line in raw_data[2:]:
+		taxonomy = line.split()[1]
+		if taxonomy != 'Unknown':
+			print taxonomy, only_one_bac
+			if ';' in taxonomy:
+				taxonomy = taxonomy.split(';')[1]
+			if taxonomy not in clusters and taxonomy not in only_one_bac:
+				clusters[taxonomy] = []
+				tax_names[tax_count] = taxonomy
+				tax_count += 1
+			if taxonomy not in only_one_bac:
+				clusters[taxonomy].append(i)
+		i += 1
+
+	# Sample and print indices within each cluster and between clusters
+	num_intra_samples = 1000
+	num_inter_samples = 4000
+	intra_cluster_dists = np.zeros((num_intra_samples, 1))
+	inter_cluster_dists = np.zeros((num_inter_samples, 1))
+	for i in xrange(num_intra_samples):
+		# Choose cluster, than choose two random OTUs in that cluster
+		cluster_name = tax_names[random.randint(0, len(clusters) - 1)]
+		rn1 = random.randint(0, len(clusters[cluster_name]) - 1)
+		rn2 = random.randint(0, len(clusters[cluster_name]) - 1)
+		while rn2 == rn1:
+			rn2 = random.randint(0, len(clusters[cluster_name]) - 1)
+		cluster_i1 = clusters[cluster_name][rn1]
+		cluster_i2 = clusters[cluster_name][rn2]
+		intra_cluster_dists[i] = dist_matrix[cluster_i1, cluster_i2]
+		
+	for i in xrange(num_inter_samples):
+		# Choose two random clusters, then choose one random OTU within each cluster
+		cluster_name1 = tax_names[random.randint(0, len(clusters) - 1)]
+		cluster_name2 = tax_names[random.randint(0, len(clusters) - 1)]
+		while cluster_name2 == cluster_name1:
+			cluster_name2 = tax_names[random.randint(0, len(clusters) - 1)]
+		rn1 = random.randint(0, len(clusters[cluster_name1]) - 1)
+		rn2 = random.randint(0, len(clusters[cluster_name2]) - 1)
+		cluster_i1 = clusters[cluster_name1][rn1]
+		cluster_i2 = clusters[cluster_name2][rn2]
+		print cluster_i1, cluster_i2, dist_matrix[cluster_i1, cluster_i2]
+		inter_cluster_dists[i] = dist_matrix[cluster_i1, cluster_i2]
+
+	print np.mean(intra_cluster_dists), np.std(intra_cluster_dists), np.mean(inter_cluster_dists), np.std(inter_cluster_dists)
+	
 def get_OTU_dists(cluster_names):
-	''' Returns a 2x2 matrix of OTU distances in the same order as the clusters in the correlation matrix '''
+	''' Returns a 2D matrix of OTU distances in the same order as the clusters in the correlation matrix '''
 	dists = np.zeros((len(cluster_names),len(cluster_names)))
 	raw_data = open('Data/uclust.seeds.97.dist', 'r').readlines()
 	lt = index_lookup_table(cluster_names)
+	cluster_names = set(cluster_names)
 	for line in raw_data:
 		curr_data = line.split()
 		cluster1 = int(curr_data[0].split(';')[0][7:])
@@ -157,14 +304,46 @@ def read_data(filename, normalize = True, threshold = 0, binary_threshold = True
 				else:
 					data[i][j] = 0.0
 
-	return data, cluster_names
+		# Remove columns with few '1's after binary thresholding
+		nonzero_cols = np.where(np.sum(data, axis = 0) > 15)[0]
+		for i in xrange(data.shape[1] - 1, -1, -1):
+			if i not in nonzero_cols:
+				del cluster_names[-1 * i]
+		data = data[:, nonzero_cols]
+	return data, cluster_names		
 
 if __name__ == "__main__":
-	thresh = 10
-	data, cluster_names = read_data('Data/uclust.otus.97.mtx', normalize = True, threshold = thresh, binary_threshold = False)
-	dist_matrix = get_OTU_dists(cluster_names)	
-	corrs = get_correlation_matrix(data)
-	print "Mantel test: ", mantel_test(1-corrs, dist_matrix)
-	plot_corrs_vs_dists(corrs, dist_matrix)
-	get_strong_corrs(corrs, threshold = 0.6)
-	generate_graph(strong_corrs, cluster_names, 'temp.pdf')
+	job = None
+	if len(sys.argv) > 1:
+		job = int(sys.argv[1])
+
+	# Check the OTU distances
+	if job == 1:
+		data, cluster_names = read_data('Data/uclust.otus.97.mtx', normalize = False, threshold = -1, binary_threshold = False)
+		dist_matrix = get_OTU_dists(cluster_names)
+		check_phylo_class(dist_matrix)
+
+	# Write limited set of clusters for Ising model
+	if job == 2:
+		select_few_OTUs()
+
+	# Show graph for Ising model results
+	if job == 3:
+		# Reads from file, so make sure files are correct
+		plot_pred_vs_act_probs()
+
+	# Mantel test
+	if job == 4:
+		thresh = 1000
+		data, cluster_names = read_data('Data/uclust.otus.97.mtx', normalize = True, threshold = thresh, binary_threshold = False)
+		dist_matrix = get_OTU_dists(cluster_names)
+		corrs = get_correlation_matrix(data)
+		print "Mantel test: ", mantel_test(1-corrs, dist_matrix)
+		plot_corrs_vs_dists(corrs, dist_matrix)
+
+	# Draw correlation graph
+	if job == 5:
+		data, cluster_names = read_data('Data/uclust.otus.97.mtx', normalize = False, threshold = -1, binary_threshold = False)
+		corrs = get_correlation_matrix(data, save_data = False)
+		strong_corrs = get_strong_corrs(corrs, threshold = 0.6)
+		generate_graph(strong_corrs, cluster_names, 'temp.pdf')
